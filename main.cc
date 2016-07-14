@@ -226,7 +226,11 @@ void usage()
             "  -R filename   Write audio data as raw S16_LE samples\n"
             "                use filename '-' to write to stdout\n"
             "  -W filename   Write audio data to .WAV file\n"
+#ifdef __APPLE__
+            "  -P            Play audio via CoreAudio device\n"
+#else
             "  -P [device]   Play audio via ALSA device (default 'default')\n"
+#endif
             "  -T filename   Write pulse-per-second timestamps\n"
             "                use filename '-' to write to stdout\n"
             "  -b seconds    Set audio buffer size in seconds\n"
@@ -298,8 +302,18 @@ int main(int argc, char **argv)
     double  ifrate  = 1.0e6;
     int     pcmrate = 48000;
     bool    stereo  = true;
-    enum OutputMode { MODE_RAW, MODE_WAV, MODE_ALSA };
+    enum OutputMode { MODE_RAW, MODE_WAV,
+#ifdef __APPLE__
+        MODE_COREAUDIO
+#else
+        MODE_ALSA
+#endif
+    };
+#ifdef __APPLE__
+    OutputMode outmode = MODE_COREAUDIO;
+#else
     OutputMode outmode = MODE_ALSA;
+#endif
     string  filename;
     string  alsadev("default");
     string  ppsfilename;
@@ -381,9 +395,13 @@ int main(int argc, char **argv)
                 filename = optarg;
                 break;
             case 'P':
+#ifdef __APPLE__
+                outmode = MODE_COREAUDIO;
+#else
                 outmode = MODE_ALSA;
                 if (optarg != NULL)
                     alsadev = optarg;
+#endif
                 break;
             case 'T':
                 ppsfilename = optarg;
@@ -520,7 +538,13 @@ int main(int argc, char **argv)
     // Calculate number of samples in audio buffer.
     unsigned int outputbuf_samples = 0;
     if (bufsecs < 0 &&
-        (outmode == MODE_ALSA || (outmode == MODE_RAW && filename == "-"))) {
+        (outmode == 
+#ifdef __APPLE__
+         MODE_COREAUDIO
+#else
+         MODE_ALSA
+#endif
+         || (outmode == MODE_RAW && filename == "-"))) {
         // Set default buffer to 1 second for interactive output streams.
         outputbuf_samples = pcmrate;
     } else if (bufsecs > 0) {
@@ -564,11 +588,18 @@ int main(int argc, char **argv)
                     filename.c_str());
             audio_output.reset(new WavAudioOutput(filename, pcmrate, stereo));
             break;
+#ifdef __APPLE__
+        case MODE_COREAUDIO:
+            fprintf(stderr, "playing audio to CoreAudio device\n");
+            audio_output.reset(new CoreAudioOutput(pcmrate, stereo));
+            break;
+#else
         case MODE_ALSA:
             fprintf(stderr, "playing audio to ALSA device '%s'\n",
                     alsadev.c_str());
             audio_output.reset(new AlsaAudioOutput(alsadev, pcmrate, stereo));
             break;
+#endif
     }
 
     if (!(*audio_output)) {

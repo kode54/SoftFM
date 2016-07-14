@@ -29,7 +29,9 @@
 #include <cerrno>
 #include <algorithm>
 
+#ifndef __APPLE__
 #include <alsa/asoundlib.h>
+#endif
 
 #include "SoftFM.h"
 #include "AudioOutput.h"
@@ -263,6 +265,7 @@ void WavAudioOutput::set_value(uint8_t * ptr, T value)
 }
 
 
+#ifndef __APPLE__
 /* ****************  class AlsaAudioOutput  **************** */
 
 // Construct ALSA output stream.
@@ -344,5 +347,96 @@ bool AlsaAudioOutput::write(const SampleVector& samples)
 
     return true;
 }
+#endif
+
+#ifdef __APPLE__
+static const uint32_t DEFAULT_CHUNK_MS = 60;
+
+CoreAudioOutput::CoreAudioOutput(unsigned int sampleRate, bool stereo) :
+    m_nchannels(stereo ? 2 : 1), m_audioQueue(NULL), m_sampleRate(sampleRate)
+{
+    const unsigned int bufferSize = 2048;
+    const unsigned int audioLatencyFrames = m_sampleRate * DEFAULT_CHUNK_MS / 1000;
+    m_bufferByteSize = bufferSize << m_nchannels;
+    // Number of buffers should be ceil(audioLatencyFrames / bufferSize)
+    m_numberOfBuffers = (audioLatencyFrames + bufferSize - 1) / bufferSize;
+    m_buffers = new AudioQueueBufferRef[m_numberOfBuffers];
+
+    pthread_mutex_init( &m_mutex, NULL );
+
+    AudioStreamBasicDescription dataFormat = {static_cast<Float64>(m_sampleRate), kAudioFormatLinearPCM, kAudioFormatFlagIsSignedInteger | kAudioFormatFlagsNativeEndian, 2 * m_nchannels, 1, 2 * m_nchannels, m_nchannels, 16, 0};
+    OSStatus res = AudioQueueNewOutput(&dataFormat, renderOutputBuffer, this, NULL, NULL, 0, &m_audioQueue);
+    if (res || m_audioQueue == NULL) {
+        return;
+    }
+
+    for (uint i = 0; i < m_numberOfBuffers; i++) {
+        res = AudioQueueAllocateBuffer(m_audioQueue, m_bufferByteSize, m_buffers + i);
+        if (res || m_buffers[i] == NULL) {
+            res = AudioQueueDispose(m_audioQueue, true);
+            m_audioQueue = NULL;
+            return;
+        }
+        m_buffers[i]->mAudioDataByteSize = m_bufferByteSize;
+        // Prime the buffer allocated
+        renderOutputBuffer(this, NULL, m_buffers[i]);
+    }
+
+    UInt32 numFramesPrepared;
+    AudioQueuePrime(m_audioQueue, 0, &numFramesPrepared);
+
+    res = AudioQueueStart(m_audioQueue, NULL);
+    if (res) {
+        res = AudioQueueDispose(m_audioQueue, true);
+        m_audioQueue = NULL;
+    }
+}
+
+void CoreAudioOutput::renderOutputBuffer(void *userData, AudioQueueRef queue, AudioQueueBufferRef buffer) {
+    CoreAudioOutput *stream = (CoreAudioOutput *)userData;
+    if (queue == NULL) {
+        // Priming the buffers, skip timestamp handling
+        queue = stream->m_audioQueue;
+    }
+
+    uint byteCount = buffer->mAudioDataByteSize;
+
+    pthread_mutex_lock( &stream->m_mutex );
+    if (byteCount > stream->m_bytebuf.size()) {
+        memset(buffer->mAudioData, 0, byteCount);
+    }
+    else {
+        memcpy( buffer->mAudioData, &stream->m_bytebuf[0], byteCount );
+        stream->m_bytebuf.erase(stream->m_bytebuf.begin(), stream->m_bytebuf.begin() + byteCount);
+    }
+    pthread_mutex_unlock( &stream->m_mutex );
+
+    AudioQueueEnqueueBuffer(queue, buffer, 0, NULL);
+}
+
+CoreAudioOutput::~CoreAudioOutput() {
+    if (m_audioQueue) {
+        AudioQueueDispose(m_audioQueue, true);
+    }
+}
+
+bool CoreAudioOutput::write(const SampleVector& samples) {
+    // Convert samples to bytes.
+    samplesToInt16(samples, m_convbuf);
+
+    pthread_mutex_lock( &m_mutex );
+    while ( m_bytebuf.size() >= 8192 ) {
+        pthread_mutex_unlock( &m_mutex );
+        usleep( 10000 );
+        pthread_mutex_lock( &m_mutex );
+    }
+
+    m_bytebuf.insert( m_bytebuf.end(), m_convbuf.begin(), m_convbuf.end() );
+    pthread_mutex_unlock( &m_mutex );
+
+    return true;
+}
+
+#endif
 
 /* end */

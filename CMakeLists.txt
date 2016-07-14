@@ -5,7 +5,10 @@ project(SoftFM)
 
 find_package(Threads)
 find_package(PkgConfig)
-find_package(ALSA REQUIRED)
+find_package(ALSA)
+if(APPLE)
+	set (CMAKE_EXE_LINKER_FLAGS "-framework AudioToolbox")
+endif(APPLE)
 
 # Find RTL-SDR library (for linking).
 pkg_check_modules(PKG_RTLSDR librtlsdr)

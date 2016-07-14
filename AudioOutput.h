@@ -114,6 +114,7 @@ private:
 
 
 /** Write audio data to ALSA device. */
+#ifndef __APPLE__
 class AlsaAudioOutput : public AudioOutput
 {
 public:
@@ -137,5 +138,44 @@ private:
     struct _snd_pcm *    m_pcm;
     std::vector<std::uint8_t> m_bytebuf;
 };
+#endif
+
+#ifdef __APPLE__
+#include <AudioToolbox/AudioQueue.h>
+#include <pthread.h>
+
+class CoreAudioOutput : public AudioOutput
+{
+public:
+
+    /**
+     * Construct CoreAudio output stream.
+     *
+     * samplerate   :: audio sample rate in Hz
+     * stereo       :: true if the output stream contains stereo data
+     */
+    CoreAudioOutput(unsigned int samplerate,
+                    bool stereo);
+
+    ~CoreAudioOutput();
+    bool write(const SampleVector& samples);
+
+private:
+    pthread_mutex_t      m_mutex;
+
+    unsigned int         m_nchannels;
+    std::vector<std::uint8_t> m_convbuf;
+    std::vector<std::uint8_t> m_bytebuf;
+
+    AudioQueueRef m_audioQueue;
+    AudioQueueBufferRef *m_buffers;
+    unsigned int m_numberOfBuffers;
+    unsigned int m_bufferByteSize;
+    
+    unsigned int m_sampleRate;
+    
+    static void renderOutputBuffer(void *userData, AudioQueueRef queue, AudioQueueBufferRef buffer);
+};
+#endif
 
 #endif
