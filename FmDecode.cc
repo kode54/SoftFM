@@ -6,6 +6,13 @@
 
 using namespace std;
 
+const int PilotPhaseLock::pilot_frequency = 19000;
+
+const double FmDecoder::default_deemphasis    =     50;
+const double FmDecoder::default_bandwidth_if  = 100000;
+const double FmDecoder::default_freq_dev      =  75000;
+const double FmDecoder::default_bandwidth_pcm =  15000;
+const double FmDecoder::pilot_freq            =  19000;
 
 /** Fast approximation of atan function. */
 static inline Sample fast_atan(Sample x)
